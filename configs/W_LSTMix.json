@@ -1,0 +1,32 @@
+{
+    "backcast_length": 168,
+    "forecast_length": 24,
+    "stride": 24,
+    "batch_size": 128,
+    "embed_dim": 8,
+    "num_heads": 2,
+    "ff_hidden_dim": 256,
+    "num_blocks_per_stack": 3,
+    "patch_size": 8,
+    "hidden_dim": 256,
+    "thetas_dim": 8,
+    "context_length": 168,
+
+    "train_dataset_path": "./dataset/train",
+    "test_dataset_path": "./W_LSTMix_test_dataset/test",
+    "val_dataset_path": "./dataset/val",
+
+    "num_epochs": 100,
+
+    "model_save_path": "./checkpoints/W_LSTMix",
+    "result_path": "./results/zero_shot/W_LSTMix",
+    "patience": 10,
+    "pretrained_model_path": "./checkpoints/W_LSTMix",
+    "finetuned_model_save_path": "./checkpoints/W_LSTMix_finetune",
+    "result_path_finetune": "./results/zero_shot/W_LSTMix_finetune",
+
+    "loss": "huber",
+    "learning_rate": 0.0001,
+    "lradj": "type1",
+    "method_decom" : "wavelet" 
+}
