@@ -82,7 +82,7 @@ class RNNBlock(nn.Module):
 
 class MLPMixerBlock(nn.Module):
     # def __init__(self, hidden_dim, thetas_dim, device, backcast_length=10, forecast_length=5, patch_size=8, num_patches=21):
-    def __init__(self, hiddend_dim, thetas_dim, device, backcast_length=10, patch_size=8, num_patches=21):
+    def __init__(self, hidden_dim, thetas_dim, device, backcast_length=10, patch_size=8, num_patches=21):
         super(MLPMixerBlock, self).__init__()
         self.hidden_dim = hidden_dim
         self.thetas_dim = thetas_dim

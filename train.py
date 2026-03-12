@@ -355,8 +355,8 @@ val_datasets = load_datasets(args['val_dataset_path'], args['backcast_length'], 
 
 # Create data loaders
 train_loader = DataLoader(train_datasets, batch_size=args['batch_size'], shuffle=True)
-# val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=True)
-val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=False)
+val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=True)
+# val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=False)  SHUFFLE OR NOT?
 
 
 
