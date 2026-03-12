@@ -22,7 +22,8 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 
 from tqdm import tqdm
 from time import time
-from sklearn.metrics import mean_squared_error
+#from sklearn.metrics import mean_squared_error
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from my_utils.tools import EarlyStopping, adjust_learning_rate, visual
 
 
@@ -35,8 +36,8 @@ def standardize_series(series, eps=1e-8):
     standardized_series = (series - mean) / (std + eps)
     return standardized_series, mean, std
 
-def unscale_predictions(predictions, mean, std, eps=1e-8):
-    return predictions * (std+eps) + mean
+# def unscale_predictions(predictions, mean, std, eps=1e-8):
+#     return predictions * (std+eps) + mean
 
 
 # In[ ]:
@@ -83,10 +84,12 @@ def decompose_series(series, method_decom, period=24, wavelet='db4', level=5):
 # In[ ]:
 
 
-class DecomposedTimeSeriesDataset(Dataset):
-    def __init__(self, series, backcast_length, forecast_length, method_decom, stride=1, period=24):
+# class DecomposedTimeSeriesDataset(Dataset):
+class AnomalyDetectionDataset(Dataset):
+    # def __init__(self, series, backcast_length, forecast_length, method_decom, stride=1, period=24):
+    def __init__(self, series, labels, backcast_length, method_decom, stride=1, period=24):
         self.backcast_length = backcast_length
-        self.forecast_length = forecast_length
+        # self.forecast_length = forecast_length
         self.stride = stride
         self.method_decom = method_decom
         # Decompose the series into trend and seasonality+residual
@@ -96,8 +99,11 @@ class DecomposedTimeSeriesDataset(Dataset):
         self.trend, self.trend_mean, self.trend_std = standardize_series(trend)
         self.season, self.season_mean, self.season_std = standardize_series(seasonality)
 
+        self.labels = labels
+
     def __len__(self):
-        return (len(self.trend) - self.backcast_length - self.forecast_length) // self.stride + 1
+        # return (len(self.trend) - self.backcast_length - self.forecast_length) // self.stride + 1
+        return (len(self.trend) - self.backcast_length) // self.stride + 1
 
     def __getitem__(self, idx):
         start = idx * self.stride
@@ -106,22 +112,28 @@ class DecomposedTimeSeriesDataset(Dataset):
         trend_input = self.trend[start : start + self.backcast_length]
         season_input = self.season[start : start + self.backcast_length]
 
-        # Targets
-        trend_target = self.trend[start + self.backcast_length : start + self.backcast_length + self.forecast_length]
-        season_target = self.season[start + self.backcast_length : start + self.backcast_length + self.forecast_length]
+        # # Targets
+        # trend_target = self.trend[start + self.backcast_length : start + self.backcast_length + self.forecast_length]
+        # season_target = self.season[start + self.backcast_length : start + self.backcast_length + self.forecast_length]
+
+        # 1 if any point in the window is anomalous, else 0
+        window_labels = self.labels[start : start + self.backcast_length]
+        label = 1.0 if np.any(window_labels) else 0.0
 
         return {
             'trend_input': torch.tensor(trend_input, dtype=torch.float32),
             'season_input': torch.tensor(season_input, dtype=torch.float32),
-            'trend_target': torch.tensor(trend_target, dtype=torch.float32),
-            'season_target': torch.tensor(season_target, dtype=torch.float32),
+            # 'trend_target': torch.tensor(trend_target, dtype=torch.float32),
+            # 'season_target': torch.tensor(season_target, dtype=torch.float32),
+            'label': torch.tensor(label, dtype=torch.float32),
         }
 
 
 # In[ ]:
 
 
-def load_datasets(folder_path, backcast_length, forecast_length, method_decom, stride=1, period=24):
+#def load_datasets(folder_path, backcast_length, forecast_length, method_decom, stride=1, period=24):
+def load_datasets(folder_path, backcast_length, method_decom, stride=1, period=24):
     datasets = []
 
     for region in os.listdir(folder_path):
@@ -133,7 +145,9 @@ def load_datasets(folder_path, backcast_length, forecast_length, method_decom, s
                 file_path = os.path.join(region_path, building)
                 df = pd.read_csv(file_path)
                 energy_data = df['energy'].values
-                dataset = DecomposedTimeSeriesDataset(energy_data, backcast_length, forecast_length, method_decom, stride)
+                #dataset = DecomposedTimeSeriesDataset(energy_data, backcast_length, forecast_length, method_decom, stride)
+                labels = df['label'].values if 'label' in df.columns else np.zeros(len(energy_data))
+                dataset = AnomalyDetectionDataset(energy_data, labels, backcast_length, method_decom, stride, period)
                 datasets.append(dataset)
 
 
@@ -145,7 +159,9 @@ def load_datasets(folder_path, backcast_length, forecast_length, method_decom, s
                     continue  # Skip if energy column is missing
 
                 energy_data = df['energy'].values
-                dataset = DecomposedTimeSeriesDataset(energy_data, backcast_length, forecast_length, method_decom,  stride, period)
+                #dataset = DecomposedTimeSeriesDataset(energy_data, backcast_length, forecast_length, method_decom,  stride, period)
+                labels = df['label'].values if 'label' in df.columns else np.zeros(len(energy_data))
+                dataset = AnomalyDetectionDataset(energy_data, labels, backcast_length, method_decom, stride, period)
                 datasets.append(dataset)
 
             else:
@@ -170,6 +186,8 @@ def train(args, model, criterion, optimizer, device, train_loader, val_loader, p
     counter = 0
     early_stop = False
 
+    threshold = args.get('threshold', 0.5)
+
     num_epochs = args["num_epochs"]
     train_start_time = time()  # Start timer 
 
@@ -192,35 +210,42 @@ def train(args, model, criterion, optimizer, device, train_loader, val_loader, p
             for i, batch in enumerate(pbar):
                 trend_input = batch['trend_input'].to(device)
                 season_input = batch['season_input'].to(device)
-                trend_target = batch['trend_target'].to(device)
-                season_target = batch['season_target'].to(device)
+                # trend_target = batch['trend_target'].to(device)
+                # season_target = batch['season_target'].to(device)
+                label = batch['label'].to(device)
 
                 optimizer.zero_grad()
 
-                # Forward pass: Get trend and season predictions
-                trend_pred, season_pred = model(trend_input, season_input)
+                # # Forward pass: Get trend and season predictions
+                # trend_pred, season_pred = model(trend_input, season_input)
 
-                # Calculate loss for trend and season separately (you could also add weightings)
-                loss_trend = criterion(trend_pred, trend_target)
-                loss_season = criterion(season_pred, season_target)
+                # # Calculate loss for trend and season separately (you could also add weightings)
+                # loss_trend = criterion(trend_pred, trend_target)
+                # loss_season = criterion(season_pred, season_target)
                 
-                # Total loss is the sum of trend and season losses
-                # total_loss = 0.3 * loss_trend + 0.7 * loss_season
+                # # Total loss is the sum of trend and season losses
+                # # total_loss = 0.3 * loss_trend + 0.7 * loss_season
 
-                sum_loss = loss_trend + loss_season
-                alpha = loss_season / sum_loss
-                beta = loss_trend / sum_loss
+                # sum_loss = loss_trend + loss_season
+                # alpha = loss_season / sum_loss
+                # beta = loss_trend / sum_loss
 
-                total_loss = alpha * loss_trend + beta * loss_season
+                # total_loss = alpha * loss_trend + beta * loss_season
 
-                total_loss.backward()
+                logits = model(trend_input, season_input)
+                loss = criterion(logits.squeeze(-1), label)
+
+                # total_loss.backward()
+                loss.backward()
                 optimizer.step()
 
-                train_losses.append(total_loss.item())
+                # train_losses.append(total_loss.item())
+                train_losses.append(loss.item())
 
                 if i % 5 ==0:
-                    pbar.set_postfix(loss=total_loss.item(), elapsed=f"{time() - epoch_start_time:.2f}s")
-        
+                    #pbar.set_postfix(loss=total_loss.item(), elapsed=f"{time() - epoch_start_time:.2f}s")
+                    pbar.set_postfix(loss=loss.item(), elapsed=f"{time() - epoch_start_time:.2f}s")
+
         # Calculate average training loss
         avg_train_loss = np.mean(train_losses)
         t_loss.append(avg_train_loss)
@@ -228,45 +253,61 @@ def train(args, model, criterion, optimizer, device, train_loader, val_loader, p
         # Validation phase
         model.eval()
         val_losses = []
-        y_true_val = []
-        y_pred_val = []
+        # y_true_val = []
+        # y_pred_val = []
+        all_labels = []
+        all_preds = []
 
         # Progress bar for the validation loop
         with tqdm(val_loader, desc=f'Validation Epoch {epoch+1}/{num_epochs}', leave=False) as pbar:
             for batch in pbar:
                 trend_input = batch['trend_input'].to(device)
                 season_input = batch['season_input'].to(device)
-                trend_target = batch['trend_target'].to(device)
-                season_target = batch['season_target'].to(device)
+                # trend_target = batch['trend_target'].to(device)
+                # season_target = batch['season_target'].to(device)
+                label = batch['label'].to(device)
 
                 with torch.no_grad():
                     trend_pred, season_pred = model(trend_input, season_input)
-                    loss_trend = criterion(trend_pred, trend_target)
-                    loss_season = criterion(season_pred, season_target)
+                    # loss_trend = criterion(trend_pred, trend_target)
+                    # loss_season = criterion(season_pred, season_target)
+                    logits = model(trend_input, season_input)
+                    val_loss = criterion(logits.squeeze(-1), label)
+
                     # val_loss = 0.3 * loss_trend + 0.7 * loss_season
 
 
-                    sum_loss = loss_trend + loss_season
-                    alpha = loss_season / sum_loss
-                    beta = loss_trend / sum_loss
+                    # sum_loss = loss_trend + loss_season
+                    # alpha = loss_season / sum_loss
+                    # beta = loss_trend / sum_loss
 
-                    val_loss = alpha * loss_trend + beta * loss_season
+                    # val_loss = alpha * loss_trend + beta * loss_season
                     val_losses.append(val_loss.item())
 
-                    # Collect true and predicted values for RMSE calculation
-                    y_true_val.extend(trend_target.cpu().numpy())
-                    y_pred_val.extend(trend_pred.cpu().numpy())
-                    y_true_val.extend(season_target.cpu().numpy())
-                    y_pred_val.extend(season_pred.cpu().numpy())
+                    # # Collect true and predicted values for RMSE calculation
+                    # y_true_val.extend(trend_target.cpu().numpy())
+                    # y_pred_val.extend(trend_pred.cpu().numpy())
+                    # y_true_val.extend(season_target.cpu().numpy())
+                    # y_pred_val.extend(season_pred.cpu().numpy())
+
+                    probs = torch.sigmoid(logits.squeeze(-1))
+                    preds = (probs >= threshold).float()
+                    all_labels.extend(label.cpu().numpy())
+                    all_preds.extend(preds.cpu().numpy())
 
         # Calculate average validation loss and RMSE
         avg_val_loss = np.mean(val_losses)
         v_loss.append(avg_val_loss)
 
-        rmse_val = np.sqrt(mean_squared_error(y_true_val, y_pred_val))
+        # rmse_val = np.sqrt(mean_squared_error(y_true_val, y_pred_val))
+        all_labels = np.array(all_labels)
+        all_preds = np.array(all_preds)
+        acc = accuracy_score(all_labels, all_preds)
+        f1 = f1_score(all_labels, all_preds, zero_division=0)
 
         # Print epoch summary
-        print(f'Epoch {epoch + 1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, RMSE: {rmse_val:.4f}')
+        # print(f'Epoch {epoch + 1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, RMSE: {rmse_val:.4f}')
+        print(f'Epoch {epoch + 1}/{num_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, Acc: {acc:.4f}, F1: {f1:.4f}')
 
         # Save the best model parameters
         if avg_val_loss < best_val_loss:
@@ -305,13 +346,17 @@ config_file = "./configs/W_LSTMix.json"
 with open(config_file, 'r') as f:
     args = json.load(f)
 
-train_datasets = load_datasets(args['train_dataset_path'], args['backcast_length'], args['forecast_length'],args['method_decom'], args['stride'])
-val_datasets = load_datasets(args['val_dataset_path'], args['backcast_length'], args['forecast_length'],args['method_decom'],  args['stride'])
+# train_datasets = load_datasets(args['train_dataset_path'], args['backcast_length'], args['forecast_length'],args['method_decom'], args['stride'])
+# val_datasets = load_datasets(args['val_dataset_path'], args['backcast_length'], args['forecast_length'],args['method_decom'],  args['stride'])
+
+train_datasets = load_datasets(args['train_dataset_path'], args['backcast_length'], args['method_decom'], args['stride'])
+val_datasets = load_datasets(args['val_dataset_path'], args['backcast_length'], args['method_decom'], args['stride'])
 
 
 # Create data loaders
 train_loader = DataLoader(train_datasets, batch_size=args['batch_size'], shuffle=True)
-val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=True)
+# val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=True)
+val_loader = DataLoader(val_datasets, batch_size=args['batch_size'], shuffle=False)
 
 
 
@@ -322,7 +367,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = W_LSTMix.Model(
     device=device,
     num_blocks_per_stack=args['num_blocks_per_stack'],
-    forecast_length=args['forecast_length'],
+    # forecast_length=args['forecast_length'],
     backcast_length=args['backcast_length'],
     patch_size=args['patch_size'],
     num_patches=args['backcast_length'] // args['patch_size'],
@@ -331,6 +376,7 @@ model = W_LSTMix.Model(
     embed_dim=args['embed_dim'],
     num_heads=args['num_heads'],
     ff_hidden_dim=args['ff_hidden_dim'],
+    num_classes=args.get('num_classes', 1),
 ).to(device)
 
 # model's parameters
@@ -338,10 +384,12 @@ param = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print("Model's parameter count is:", param)
 
 # Define loss and optimizer
-if args['loss'] == 'mse':
-    criterion = torch.nn.MSELoss()
-else:
-    criterion = torch.nn.HuberLoss(reduction="mean", delta=1)
+# if args['loss'] == 'mse':
+#     criterion = torch.nn.MSELoss()
+# else:
+#     criterion = torch.nn.HuberLoss(reduction="mean", delta=1)
+
+criterion = torch.nn.BCEWithLogitsLoss()
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args["learning_rate"])
 
