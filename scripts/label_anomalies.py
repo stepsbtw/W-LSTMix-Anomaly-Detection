@@ -54,17 +54,12 @@ def label_dataset(input_path, output_path, lower=1, upper=99, method='wavelet', 
 
 
 if __name__ == '__main__':
-    p = argparse.ArgumentParser(description="Label dataset with percentile-based anomaly detection.")
+    p = argparse.ArgumentParser()
     p.add_argument('--input',  type=str, required=True)
     p.add_argument('--output', type=str, default=None, help="Output path (default: <input>_labeled)")
-    p.add_argument('--overwrite', action='store_true', help="Save in-place")
-    p.add_argument('--lower',  type=float, default=1)
-    p.add_argument('--upper',  type=float, default=99)
-    p.add_argument('--method', type=str, default='wavelet', choices=['wavelet', 'seasonal_decompose'])
-    p.add_argument('--period', type=int, default=24)
     args = p.parse_args()
 
     output = args.input if args.overwrite else (args.output or args.input.rstrip('/') + '_labeled')
 
-    print(f"Input: {args.input}  |  Output: {output}  |  Percentiles: [{args.lower}, {args.upper}]  |  Method: {args.method}\n")
-    label_dataset(args.input, output, args.lower, args.upper, args.method, args.period)
+    print(f"Input: {args.input}  |  Output: {output}\n")
+    label_dataset(args.input, output)
