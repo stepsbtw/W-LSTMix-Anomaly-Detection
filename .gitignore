@@ -1,5 +1,6 @@
 /W_LSTMix_test_dataset/
 /dataset_labeled/
+/dataset/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

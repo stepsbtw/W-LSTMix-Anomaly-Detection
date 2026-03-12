@@ -107,13 +107,16 @@ W-LSTMix/
 │   └── tools.py                # Early stopping, LR scheduling, visualization
 ├── configs/
 │   └── W_LSTMix.json           # Hyperparameters & paths
+├── dataset_labeled/            # Labeled dataset (region-wise folders)
 ├── checkpoints/
 │   ├── W_LSTMix/               # Pre-trained model checkpoint
 │   └── W_LSTMix_finetune/      # Fine-tuned model checkpoint
 ├── train.py                     # Training script (BCEWithLogitsLoss)
 ├── test.py                      # Evaluation script (Acc, Prec, Rec, F1, AUC)
 ├── finetune.py                  # Fine-tuning script
-├── detect_anomalies.py          # Anomaly labeling via percentile thresholds
+├── scripts/
+│   ├── label_anomalies.py       # Percentile-based label generation 
+│   └── class_balance.py         # Label distribution checker
 └── requirements.txt
 ```
 
@@ -135,9 +138,23 @@ Each CSV/Parquet file should contain at minimum:
 
 If `label` is not present, it defaults to all zeros (no anomalies).
 
+Dataset root is expected to be region-wise:
+
+```text
+<dataset_root>/
+   Region_A/
+      building_1.csv | .parquet
+      building_2.csv | .parquet
+   Region_B/
+      building_3.csv | .parquet
+      ...
+```
+
+The included `dataset_labeled/` folder already follows this layout and can be used directly.
+
 ### Generating Labels with Percentiles
 
-Labels are created via `detect_anomalies.py`:
+Labels can be generated with `scripts/label_anomalies.py`:
 
 1. Decompose the series into **trend** and **seasonality**.
 2. Compute upper/lower **percentile bounds** for each component.
@@ -146,6 +163,20 @@ Labels are created via `detect_anomalies.py`:
 ---
 
 ## Usage
+
+### 0) Configure dataset paths
+
+Update `configs/W_LSTMix.json` before running scripts:
+
+```json
+{
+   "train_dataset_path": "./dataset_labeled_train",
+   "val_dataset_path": "./dataset_labeled_val",
+   "test_dataset_path": "./dataset_labeled_test"
+}
+```
+
+For a quick smoke test, you may point all three paths to `./dataset_labeled`.
 
 ### Training
 ```bash
@@ -164,6 +195,8 @@ Evaluates on the test set, reporting per-building **Accuracy, Precision, Recall,
 python finetune.py
 ```
 Fine-tunes a pre-trained checkpoint on a new dataset or domain.
+
+Note: current `finetune.py` loads fine-tuning data from `test_dataset_path` in config.
 
 ---
 
